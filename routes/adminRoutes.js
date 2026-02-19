@@ -37,7 +37,11 @@ const upload = multer({
 // Create single team/captain with logo upload
 router.post('/create-captain', upload.single('logo'), async (req, res) => {
   try {
-    const { teamName, captainName, teamId, pin } = req.body;
+    // Trim and extract fields from FormData
+    const teamName = req.body.teamName?.trim();
+    const captainName = req.body.captainName?.trim();
+    const teamId = req.body.teamId?.trim();
+    const pin = req.body.pin?.trim();
     
     // Validate required fields
     if (!teamName || !captainName || !teamId || !pin) {
