@@ -13,10 +13,10 @@ connectDB();
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIO(server, {
+const io = require('socket.io')(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
+    origin: "*", // Replace with your frontend URL once deployed
+    methods: ["GET", "POST"]
   }
 });
 

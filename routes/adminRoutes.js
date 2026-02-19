@@ -33,7 +33,7 @@ router.post('/create-captain', async (req, res) => {
       captainName,
       teamId,
       pin, // Will be hashed by pre-save middleware
-      remainingPoints: parseInt(process.env.INITIAL_BUDGET) || 110,
+      remainingPoints: Number.parseInt(process.env.INITIAL_BUDGET) || 110,
       rosterSlotsFilled: 0,
       players: []
     });
@@ -71,7 +71,7 @@ router.post('/generate-teams', async (req, res) => {
         captainName: `Captain ${teamNumber}`,
         teamId: `${prefix}${teamNumber}`,
         pin: pin,
-        remainingPoints: parseInt(process.env.INITIAL_BUDGET) || 110,
+        remainingPoints: Number.parseInt(process.env.INITIAL_BUDGET) || 110,
         rosterSlotsFilled: 0,
         players: []
       });
@@ -116,7 +116,7 @@ router.post('/reset', async (req, res) => {
     await Team.updateMany(
       {},
       {
-        remainingPoints: parseInt(process.env.INITIAL_BUDGET) || 110,
+        remainingPoints: Number.parseInt(process.env.INITIAL_BUDGET) || 110,
         rosterSlotsFilled: 0,
         players: [],
         isOnline: false
@@ -224,7 +224,7 @@ router.post('/clear-all-data', async (req, res) => {
       currentPlayer: null,
       currentBid: null,
       isActive: false,
-      timerValue: parseInt(process.env.TIMER_DURATION) || 20
+      timerValue: Number.parseInt(process.env.TIMER_DURATION) || 20
     });
 
     res.json({ 

@@ -15,6 +15,44 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Download all teams info as CSV (for admin) - MUST come before /:id routes
+router.get('/download/all-teams', async (req, res) => {
+  try {
+    const teams = await Team.find().populate('players');
+    
+    if (teams.length === 0) {
+      return res.status(404).json({ success: false, message: 'No teams found' });
+    }
+
+    let csvContent = 'All Teams Summary\n\n';
+    
+    teams.forEach((team, index) => {
+      if (index > 0) csvContent += '\n';
+      
+      csvContent += `Team ${index + 1}\n`;
+      csvContent += `Team Name,${team.teamName}\n`;
+      csvContent += `Captain,${team.captainName}\n`;
+      csvContent += `Total Points Spent,${(Number.parseInt(process.env.INITIAL_BUDGET) || 110) - team.remainingPoints}\n`;
+      csvContent += `Remaining Points,${team.remainingPoints}\n`;
+      csvContent += `Players Count,${team.rosterSlotsFilled}\n\n`;
+      
+      if (team.players.length > 0) {
+        csvContent += 'Name,Category,Base Price,Sold Price\n';
+        team.players.forEach(player => {
+          csvContent += `${player.name},${player.category},${player.basePrice},${player.soldPrice}\n`;
+        });
+      }
+      csvContent += '\n';
+    });
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="all_teams_auction_results.csv"');
+    res.send(csvContent);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // Get single team
 router.get('/:id', async (req, res) => {
   try {
@@ -28,10 +66,7 @@ router.get('/:id', async (req, res) => {
 
     res.json({ 
       success: true, 
-      team: {
-        ...team.toObject(),
-        maxBid: team.getMaxBid()
-      }
+      team: team.toObject()
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -138,7 +173,7 @@ router.get('/:id/download', async (req, res) => {
     let csvContent = 'Team Information\n';
     csvContent += `Team Name,${team.teamName}\n`;
     csvContent += `Captain,${team.captainName}\n`;
-    csvContent += `Total Points Spent,${(parseInt(process.env.INITIAL_BUDGET) || 110) - team.remainingPoints}\n`;
+    csvContent += `Total Points Spent,${(Number.parseInt(process.env.INITIAL_BUDGET) || 110) - team.remainingPoints}\n`;
     csvContent += `Remaining Points,${team.remainingPoints}\n`;
     csvContent += `Players Count,${team.rosterSlotsFilled}\n\n`;
     
@@ -151,45 +186,7 @@ router.get('/:id/download', async (req, res) => {
 
     // Set headers for CSV download
     res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="${team.teamName.replace(/\s+/g, '_')}_squad.csv"`);
-    res.send(csvContent);
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// Download all teams info as CSV (for admin)
-router.get('/download/all-teams', async (req, res) => {
-  try {
-    const teams = await Team.find().populate('players');
-    
-    if (teams.length === 0) {
-      return res.status(404).json({ success: false, message: 'No teams found' });
-    }
-
-    let csvContent = 'All Teams Summary\n\n';
-    
-    teams.forEach((team, index) => {
-      if (index > 0) csvContent += '\n';
-      
-      csvContent += `Team ${index + 1}\n`;
-      csvContent += `Team Name,${team.teamName}\n`;
-      csvContent += `Captain,${team.captainName}\n`;
-      csvContent += `Total Points Spent,${(parseInt(process.env.INITIAL_BUDGET) || 110) - team.remainingPoints}\n`;
-      csvContent += `Remaining Points,${team.remainingPoints}\n`;
-      csvContent += `Players Count,${team.rosterSlotsFilled}\n\n`;
-      
-      if (team.players.length > 0) {
-        csvContent += 'Name,Category,Base Price,Sold Price\n';
-        team.players.forEach(player => {
-          csvContent += `${player.name},${player.category},${player.basePrice},${player.soldPrice}\n`;
-        });
-      }
-      csvContent += '\n';
-    });
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', 'attachment; filename="all_teams_auction_results.csv"');
+    res.setHeader('Content-Disposition', `attachment; filename="${team.teamName.replaceAll(/\s+/g, '_')}_squad.csv"`);
     res.send(csvContent);
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

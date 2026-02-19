@@ -54,7 +54,7 @@ router.post('/register', upload.single('photo'), async (req, res) => {
       name,
       category,
       photo: photoPath,
-      basePrice: parseInt(basePrice) || 30
+      basePrice: Number.parseInt(basePrice) || 30
     });
 
     await player.save();
@@ -125,7 +125,7 @@ router.put('/:id', upload.single('photo'), async (req, res) => {
     // Update basic fields
     if (req.body.name) player.name = req.body.name;
     if (req.body.category) player.category = req.body.category;
-    if (req.body.basePrice) player.basePrice = parseInt(req.body.basePrice);
+    if (req.body.basePrice) player.basePrice = Number.parseInt(req.body.basePrice);
 
     // Update photo if provided
     if (req.file) {
@@ -215,7 +215,7 @@ router.post('/bulk-upload', upload.single('csvFile'), async (req, res) => {
           name: row.name || row.Name,
           category: normalizedCategory,
           photo: row.photo || row.Photo || '/placeholder-player.jpg',
-          basePrice: parseInt(row.basePrice || row['Base Price']) || 5
+          basePrice: Number.parseInt(row.basePrice || row['Base Price']) || 5
         });
       })
       .on('end', async () => {

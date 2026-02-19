@@ -4,7 +4,7 @@ const Bid = require('../models/Bid');
 const AuctionState = require('../models/AuctionState');
 
 let auctionTimer = null;
-let timerValue = parseInt(process.env.TIMER_DURATION) || 20;
+let timerValue = Number.parseInt(process.env.TIMER_DURATION) || 20;
 let playerQueue = [];
 let isAutoAuction = false;
 let unsoldPlayers = [];
@@ -50,7 +50,6 @@ module.exports = (io) => {
             captainName: teamData.captainName,
             remainingPoints: teamData.remainingPoints,
             rosterSlotsFilled: teamData.rosterSlotsFilled,
-            maxBid: teamData.getMaxBid(),
             players: teamData.players
           }
         });
@@ -113,33 +112,35 @@ module.exports = (io) => {
         const currentHighBid = auctionState.currentHighBid.amount;
         const hasNoBids = !auctionState.currentHighBid.team; // No bids placed yet
         
-        // Allow base price bid if no bids yet, otherwise must be higher than current
+        // Allow base price bid if no bids yet, otherwise must be at least 5L higher
         if (hasNoBids) {
           if (amount < currentHighBid) {
             return socket.emit('bid:error', { 
-              message: `Bid must be at least ${currentHighBid}` 
+              message: `Bid must be at least ₹${currentHighBid}L` 
             });
           }
         } else {
+          // Must be higher than current bid (any increment allowed)
           if (amount <= currentHighBid) {
             return socket.emit('bid:error', { 
-              message: `Bid must be higher than ${currentHighBid}` 
+              message: `Bid must be higher than ₹${currentHighBid}L` 
             });
           }
         }
 
-        // Validate max bid (Safety Rule)
-        const maxBid = team.getMaxBid();
-        if (amount > maxBid) {
-          return socket.emit('bid:error', { 
-            message: `Maximum allowed bid is ${maxBid}` 
-          });
-        }
 
         // Check if team has enough points
         if (amount > team.remainingPoints) {
           return socket.emit('bid:error', { 
-            message: 'Insufficient points' 
+            message: `Insufficient points. You have ₹${team.remainingPoints}L remaining` 
+          });
+        }
+
+        // Prevent team from bidding against themselves
+        if (!hasNoBids && auctionState.currentHighBid.team && 
+            auctionState.currentHighBid.team.toString() === team._id.toString()) {
+          return socket.emit('bid:error', { 
+            message: 'You are already the highest bidder' 
           });
         }
 
@@ -167,12 +168,14 @@ module.exports = (io) => {
         const bidData = {
           amount: amount,
           teamName: team.teamName,
-          teamId: team._id,
+          teamId: team._id.toString(),
           timestamp: new Date()
         };
 
         io.emit('bid:new', bidData);
-        socket.emit('bid:success', bidData);
+        socket.emit('bid:success');
+
+        console.log(`New bid: ₹${amount}L by ${team.teamName} for ${player.name}`);
 
       } catch (error) {
         console.error('Bid error:', error);
@@ -363,7 +366,10 @@ module.exports = (io) => {
   // Timer functions
   function startTimer(io) {
     stopTimer(); // Clear any existing timer
-    timerValue = parseInt(process.env.TIMER_DURATION) || 20;
+    timerValue = Number.parseInt(process.env.TIMER_DURATION) || 20;
+
+    // Broadcast initial timer value
+    io.emit('timer:update', { value: timerValue });
 
     auctionTimer = setInterval(async () => {
       timerValue--;
@@ -373,6 +379,7 @@ module.exports = (io) => {
 
       // Timer hit zero - auto SOLD
       if (timerValue <= 0) {
+        stopTimer();
         await handleAutoSold(io);
       }
     }, 1000);
@@ -386,11 +393,8 @@ module.exports = (io) => {
   }
 
   function resetTimer(io) {
-    // If timer is below 10 seconds, reset to 10 seconds
-    // Otherwise, reset to full duration (20 seconds)
-    if (timerValue < 10) {
-      timerValue = 10;
-    }
+    // Reset timer to 10 seconds on every new bid (standard auction behavior)
+    timerValue = 10;
     io.emit('timer:reset', { value: timerValue });
   }
 
