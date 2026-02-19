@@ -37,14 +37,21 @@ const upload = multer({
 // Create single team/captain with logo upload
 router.post('/create-captain', upload.single('logo'), async (req, res) => {
   try {
+    // Log received data for debugging
+    console.log('Received body:', req.body);
+    console.log('Received file:', req.file);
+    
     // Trim and extract fields from FormData
     const teamName = req.body.teamName?.trim();
     const captainName = req.body.captainName?.trim();
     const teamId = req.body.teamId?.trim();
     const pin = req.body.pin?.trim();
     
+    console.log('Parsed fields:', { teamName, captainName, teamId, pin });
+    
     // Validate required fields
     if (!teamName || !captainName || !teamId || !pin) {
+      console.log('Validation failed - missing fields');
       return res.status(400).json({ 
         success: false, 
         message: 'All fields are required: teamName, captainName, teamId, pin' 
@@ -77,6 +84,8 @@ router.post('/create-captain', upload.single('logo'), async (req, res) => {
 
     await newTeam.save();
 
+    console.log('Team created successfully:', newTeam.teamId);
+
     res.json({ 
       success: true, 
       message: 'Captain created successfully',
@@ -89,6 +98,7 @@ router.post('/create-captain', upload.single('logo'), async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error creating captain:', error);
     res.status(400).json({ success: false, message: error.message });
   }
 });
