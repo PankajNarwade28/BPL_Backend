@@ -1,12 +1,41 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const Team = require('../models/Team');
 const Player = require('../models/Player');
 const Bid = require('../models/Bid');
 const AuctionState = require('../models/AuctionState');
 
-// Create single team/captain
-router.post('/create-captain', async (req, res) => {
+// Configure multer for team logo uploads
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, '../uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, 'team-' + Date.now() + path.extname(file.originalname));
+  }
+});
+
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'));
+    }
+  }
+});
+
+// Create single team/captain with logo upload
+router.post('/create-captain', upload.single('logo'), async (req, res) => {
   try {
     const { teamName, captainName, teamId, pin } = req.body;
     
@@ -27,12 +56,16 @@ router.post('/create-captain', async (req, res) => {
       });
     }
 
+    // Get logo path
+    const logoPath = req.file ? `/uploads/${req.file.filename}` : null;
+
     // Create new team
     const newTeam = new Team({
       teamName,
       captainName,
       teamId,
       pin, // Will be hashed by pre-save middleware
+      logo: logoPath,
       remainingPoints: Number.parseInt(process.env.INITIAL_BUDGET) || 110,
       rosterSlotsFilled: 0,
       players: []

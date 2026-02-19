@@ -22,6 +22,10 @@ const teamSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  logo: {
+    type: String,
+    default: null
+  },
   remainingPoints: {
     type: Number,
     required: true,
