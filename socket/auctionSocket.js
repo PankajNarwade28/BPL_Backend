@@ -8,6 +8,7 @@ let timerValue = Number.parseInt(process.env.TIMER_DURATION) || 20;
 let playerQueue = [];
 let isAutoAuction = false;
 let unsoldPlayers = [];
+let isTeamSummaryShowing = false;
 
 module.exports = (io) => {
   // Store connected clients
@@ -88,6 +89,21 @@ module.exports = (io) => {
       sendAuctionState(socket);
     });
 
+    // Handle big screen team summary status
+    socket.on('bigscreen:summaryStarting', () => {
+      isTeamSummaryShowing = true;
+      console.log('Team summary started - blocking new auctions');
+      // Notify admin that summary is showing
+      io.to('admin').emit('teamSummary:showing', { isShowing: true });
+    });
+
+    socket.on('bigscreen:summaryComplete', () => {
+      isTeamSummaryShowing = false;
+      console.log('Team summary complete - allowing new auctions');
+      // Notify admin that summary is complete
+      io.to('admin').emit('teamSummary:showing', { isShowing: false });
+    });
+
     // Handle bid placement
     socket.on('bid:place', async ({ amount }) => {
       try {
@@ -164,11 +180,18 @@ module.exports = (io) => {
         // Reset timer
         resetTimer(io);
 
-        // Broadcast bid to all clients
+        // Broadcast bid to all clients with full team data
         const bidData = {
           amount: amount,
           teamName: team.teamName,
           teamId: team._id.toString(),
+          team: {
+            _id: team._id,
+            teamName: team.teamName,
+            logo: team.logo,
+            purseBudget: team.purseBudget,
+            remainingPoints: team.remainingPoints
+          },
           timestamp: new Date()
         };
 
@@ -187,6 +210,11 @@ module.exports = (io) => {
     socket.on('admin:startAuction', async ({ playerId }) => {
       if (!adminSockets.has(socket.id)) {
         return socket.emit('error', { message: 'Unauthorized' });
+      }
+
+      // Block starting new auction if team summary is showing
+      if (isTeamSummaryShowing) {
+        return socket.emit('error', { message: 'Please wait for team summary to complete' });
       }
 
       try {
@@ -475,7 +503,7 @@ module.exports = (io) => {
       if (isAutoAuction) {
         setTimeout(async () => {
           await processNextPlayerInQueue(io);
-        }, 2000); // 2 second delay between players
+        }, 17000); // 17 seconds delay: 5s sold animation + 10s team summary + 2s buffer
       }
 
     } catch (error) {
