@@ -306,17 +306,44 @@ module.exports = (io) => {
       }
 
       try {
-        // Get all available players (not sold), sorted by base price descending
+        // Get all available players (not sold)
         const availablePlayers = await Player.find({ 
           status: { $ne: 'SOLD' }
-        }).sort({ basePrice: -1 });
+        });
 
         if (availablePlayers.length === 0) {
           return socket.emit('error', { message: 'No players available for auction' });
         }
 
+        // Group players by base price
+        const playersByPrice = {};
+        availablePlayers.forEach(player => {
+          const price = player.basePrice;
+          if (!playersByPrice[price]) {
+            playersByPrice[price] = [];
+          }
+          playersByPrice[price].push(player);
+        });
+
+        // Sort prices in descending order (highest to lowest)
+        const sortedPrices = Object.keys(playersByPrice)
+          .map(Number)
+          .sort((a, b) => b - a);
+
+        // Shuffle players within each price group and flatten
+        const shuffledPlayers = [];
+        sortedPrices.forEach(price => {
+          const playersAtPrice = playersByPrice[price];
+          // Fisher-Yates shuffle algorithm
+          for (let i = playersAtPrice.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [playersAtPrice[i], playersAtPrice[j]] = [playersAtPrice[j], playersAtPrice[i]];
+          }
+          shuffledPlayers.push(...playersAtPrice);
+        });
+
         // Initialize queue
-        playerQueue = availablePlayers.map(p => p._id.toString());
+        playerQueue = shuffledPlayers.map(p => p._id.toString());
         unsoldPlayers = [];
         isAutoAuction = true;
 

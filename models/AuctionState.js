@@ -8,7 +8,7 @@ const auctionStateSchema = new mongoose.Schema({
   },
   timerValue: {
     type: Number,
-    default: 20
+    default: 60
   },
   isActive: {
     type: Boolean,
