@@ -8,7 +8,7 @@ const playerSchema = new mongoose.Schema({
   },
   photo: {
     type: String,
-    default: '/placeholder-player.jpg'
+    default: 'https://res.cloudinary.com/dz8q0fb8m/image/upload/v1772197979/defaultPlayer_kad3xb.png'
   },
   category: {
     type: String,

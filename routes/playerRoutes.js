@@ -1,40 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
 const csv = require('csv-parser');
 const fs = require('fs');
 const path = require('path');
 const Player = require('../models/Player');
-
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = path.join(__dirname, '../uploads');
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
-  }
-});
-
-const upload = multer({ 
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
-  fileFilter: (req, file, cb) => {
-    // Allow images for photo uploads and CSV for bulk upload
-    if (file.mimetype.startsWith('image/') || file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
-      cb(null, true);
-    } else {
-      cb(new Error('Only image and CSV files are allowed'));
-    }
-  }
-});
+const { uploadPlayerPhoto, uploadToCloudinary } = require('../config/cloudinary');
 
 // Player self-registration with photo upload
-router.post('/register', upload.single('photo'), async (req, res) => {
+router.post('/register', uploadPlayerPhoto.single('photo'), async (req, res) => {
   try {
     const { name, category, basePrice } = req.body;
 
@@ -46,14 +19,27 @@ router.post('/register', upload.single('photo'), async (req, res) => {
       });
     }
 
-    // Get photo path
-    const photoPath = req.file ? `/uploads/${req.file.filename}` : '/placeholder-player.jpg';
+    // Upload photo to Cloudinary if provided
+    let photoUrl = null;
+    if (req.file) {
+      try {
+        console.log('Uploading photo to Cloudinary:', req.file.path);
+        photoUrl = await uploadToCloudinary(req.file.path, 'players');
+        console.log('Cloudinary upload successful:', photoUrl);
+      } catch (uploadError) {
+        console.error('Cloudinary upload error:', uploadError);
+        return res.status(500).json({ 
+          success: false, 
+          message: 'Failed to upload photo to Cloudinary: ' + uploadError.message 
+        });
+      }
+    }
 
     // Create player
     const player = new Player({
       name,
       category,
-      photo: photoPath,
+      photo: photoUrl || null,
       basePrice: Number.parseInt(basePrice) || 30
     });
 
@@ -114,7 +100,7 @@ router.post('/', async (req, res) => {
 });
 
 // Update player
-router.put('/:id', upload.single('photo'), async (req, res) => {
+router.put('/:id', uploadPlayerPhoto.single('photo'), async (req, res) => {
   try {
     const player = await Player.findById(req.params.id);
     
@@ -129,7 +115,8 @@ router.put('/:id', upload.single('photo'), async (req, res) => {
 
     // Update photo if provided
     if (req.file) {
-      player.photo = `/uploads/${req.file.filename}`;
+      const photoUrl = await uploadToCloudinary(req.file.path, 'players');
+      player.photo = photoUrl;
     }
 
     await player.save();
@@ -165,7 +152,32 @@ router.delete('/:id', async (req, res) => {
 });
 
 // Bulk upload via CSV
-router.post('/bulk-upload', upload.single('csvFile'), async (req, res) => {
+const multer = require('multer');
+const csvStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, '../temp-uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + '-' + file.originalname);
+  }
+});
+
+const csvUpload = multer({ 
+  storage: csvStorage,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV files are allowed'));
+    }
+  }
+});
+
+router.post('/bulk-upload', csvUpload.single('csvFile'), async (req, res) => {
   try {
     console.log('CSV Upload - File received:', req.file);
     
@@ -214,7 +226,7 @@ router.post('/bulk-upload', upload.single('csvFile'), async (req, res) => {
         players.push({
           name: row.name || row.Name,
           category: normalizedCategory,
-          photo: row.photo || row.Photo || '/placeholder-player.jpg',
+          photo: row.photo || row.Photo || 'https://res.cloudinary.com/dz8q0fb8m/image/upload/v1772197979/defaultPlayer_kad3xb.png',
           basePrice: Number.parseInt(row.basePrice || row['Base Price']) || 5
         });
       })
@@ -259,40 +271,6 @@ router.post('/bulk-upload', upload.single('csvFile'), async (req, res) => {
 
   } catch (error) {
     console.error('CSV Upload - Server error:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// Update player
-router.put('/:id', async (req, res) => {
-  try {
-    const player = await Player.findByIdAndUpdate(
-      req.params.id,
-      req.body,
-      { new: true, runValidators: true }
-    );
-
-    if (!player) {
-      return res.status(404).json({ success: false, message: 'Player not found' });
-    }
-
-    res.json({ success: true, player });
-  } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
-  }
-});
-
-// Delete player
-router.delete('/:id', async (req, res) => {
-  try {
-    const player = await Player.findByIdAndDelete(req.params.id);
-
-    if (!player) {
-      return res.status(404).json({ success: false, message: 'Player not found' });
-    }
-
-    res.json({ success: true, message: 'Player deleted successfully' });
-  } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });

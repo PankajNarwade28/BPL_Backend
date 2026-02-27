@@ -26,8 +26,18 @@ router.get('/download/all-teams', async (req, res) => {
       return res.status(404).json({ success: false, message: 'No teams found' });
     }
 
-    // Create PDF document
-    const doc = new PDFDocument({ margin: 50 });
+    // Helper function to safely parse numbers and remove unwanted characters
+    const parsePrice = (value) => {
+      if (typeof value === 'number') return value;
+      if (typeof value === 'string') {
+        // Remove quotes, L, ₹ and any other non-numeric characters except decimal point
+        return parseFloat(value.replace(/['"₹L\s]/g, '')) || 0;
+      }
+      return 0;
+    };
+
+    // Create PDF document with better margins
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
     
     // Set response headers for PDF
     res.setHeader('Content-Type', 'application/pdf');
@@ -36,108 +46,149 @@ router.get('/download/all-teams', async (req, res) => {
     // Pipe PDF to response
     doc.pipe(res);
 
-    // Title Page
-    doc.fontSize(24).font('Helvetica-Bold').text('Cricket Auction Results', { align: 'center' });
-    doc.moveDown(0.5);
-    doc.fontSize(14).font('Helvetica').text(`Total Teams: ${teams.length}`, { align: 'center' });
-    doc.fontSize(12).text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'center' });
+    // Title Page with improved design
+    doc.fontSize(32).font('Helvetica-Bold').fillColor('#1e3a8a').text('Cricket Auction Results', { align: 'center' });
+    doc.moveDown(0.8);
+    doc.fontSize(16).font('Helvetica').fillColor('#374151').text(`Total Teams: ${teams.length}`, { align: 'center' });
+    doc.moveDown(0.3);
+    doc.fontSize(11).fillColor('#6b7280').text(`Generated on: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, { align: 'center' });
     doc.moveDown(2);
+
+    // Calculate initial budget once
+    const initialBudget = Number.parseInt(process.env.INITIAL_BUDGET) || 1000;
 
     // Loop through each team
     teams.forEach((team, index) => {
       if (index > 0) {
-        doc.addPage();
+        doc.addPage({ margin: 40 });
       }
 
-      // Team Header
-      doc.fontSize(20).font('Helvetica-Bold').fillColor('#1e40af').text(team.teamName, { align: 'center' });
-      doc.moveDown(0.3);
-      doc.fontSize(14).font('Helvetica').fillColor('#000000').text(`Captain: ${team.captainName}`, { align: 'center' });
+      // Team Header with improved styling
+      doc.fontSize(28).font('Helvetica-Bold').fillColor('#1e3a8a').text(team.teamName, { align: 'center' });
+      doc.moveDown(0.4);
+      doc.fontSize(13).font('Helvetica').fillColor('#374151').text(`Captain: ${team.captainName}`, { align: 'center' });
       doc.moveDown(1.5);
 
-      // Team Stats Box
+      // Team Statistics Box
       const statsY = doc.y;
-      const statsBoxHeight = 80;
+      const statsBoxHeight = 90;
       
-      // Draw stats box background
-      doc.rect(50, statsY, 495, statsBoxHeight).fillAndStroke('#f3f4f6', '#d1d5db');
+      // Enhanced stats box with rounded corners
+      doc.roundedRect(40, statsY, 515, statsBoxHeight, 5).fillAndStroke('#f0f9ff', '#3b82f6');
       
-      // Stats content
-      doc.fillColor('#000000');
-      const statsStartY = statsY + 15;
+      // Calculate values with proper number parsing
+      const remainingBudget = parsePrice(team.remainingPoints);
+      const budgetSpent = initialBudget - remainingBudget;
+      const playersBought = team.rosterSlotsFilled || 0;
+      const avgPrice = playersBought > 0 ? Math.round(budgetSpent / playersBought) : 0;
       
-      doc.fontSize(11).font('Helvetica-Bold').text('Budget Spent:', 60, statsStartY);
-      doc.font('Helvetica').text(`₹${(Number.parseInt(process.env.INITIAL_BUDGET) || 110) - team.remainingPoints}L`, 180, statsStartY);
+      // Stats content with better layout
+      doc.fillColor('#1e3a8a');
+      const statsStartY = statsY + 20;
       
-      doc.font('Helvetica-Bold').text('Remaining Budget:', 300, statsStartY);
-      doc.font('Helvetica').text(`₹${team.remainingPoints}L`, 430, statsStartY);
+      // Left Column
+      doc.fontSize(10).font('Helvetica-Bold').text('Budget Spent:', 60, statsStartY, { width: 110 });
+      doc.fillColor('#000000').font('Helvetica').fontSize(13).text(`₹${budgetSpent}L`, 170, statsStartY - 1);
       
-      doc.font('Helvetica-Bold').text('Players Bought:', 60, statsStartY + 25);
-      doc.font('Helvetica').text(team.rosterSlotsFilled.toString(), 180, statsStartY + 25);
+      doc.fillColor('#1e3a8a').fontSize(10).font('Helvetica-Bold').text('Remaining Budget:', 60, statsStartY + 30, { width: 110 });
+      doc.fillColor('#059669').font('Helvetica').fontSize(13).text(`₹${remainingBudget}L`, 170, statsStartY + 29);
       
-      doc.font('Helvetica-Bold').text('Avg Player Price:', 300, statsStartY + 25);
-      const avgPrice = team.rosterSlotsFilled > 0 
-        ? Math.round(((Number.parseInt(process.env.INITIAL_BUDGET) || 110) - team.remainingPoints) / team.rosterSlotsFilled)
-        : 0;
-      doc.font('Helvetica').text(`₹${avgPrice}L`, 430, statsStartY + 25);
+      // Right Column
+      doc.fillColor('#1e3a8a').fontSize(10).font('Helvetica-Bold').text('Players Bought:', 310, statsStartY, { width: 110 });
+      doc.fillColor('#000000').font('Helvetica').fontSize(13).text(`${playersBought}`, 420, statsStartY - 1);
+      
+      doc.fillColor('#1e3a8a').fontSize(10).font('Helvetica-Bold').text('Avg Player Price:', 310, statsStartY + 30, { width: 110 });
+      doc.fillColor('#7c3aed').font('Helvetica').fontSize(13).text(`₹${avgPrice}L`, 420, statsStartY + 29);
 
       doc.y = statsY + statsBoxHeight + 20;
 
-      // Players Table
-      if (team.players.length > 0) {
-        doc.fontSize(14).font('Helvetica-Bold').text('Squad Players', { underline: true });
+      // Squad Players Section
+      if (team.players && team.players.length > 0) {
+        doc.fontSize(16).font('Helvetica-Bold').fillColor('#1e3a8a').text('Squad Players');
         doc.moveDown(0.8);
 
-        // Table headers
+        // Enhanced table design
         const tableTop = doc.y;
-        const colWidths = { no: 30, name: 160, category: 100, base: 85, sold: 85 };
-        let startX = 50;
+        const colWidths = { no: 35, name: 175, category: 100, base: 90, sold: 95 };
+        const startX = 40;
+        const tableWidth = Object.values(colWidths).reduce((a, b) => a + b, 0);
 
-        // Header background
-        doc.rect(startX, tableTop - 5, 495, 25).fillAndStroke('#3b82f6', '#2563eb');
+        // Table Header with better design
+        doc.roundedRect(startX, tableTop, tableWidth, 28, 3).fillAndStroke('#2563eb', '#1e40af');
         
         // Header text
         doc.fontSize(10).font('Helvetica-Bold').fillColor('#ffffff');
-        doc.text('#', startX + 5, tableTop + 2, { width: colWidths.no, align: 'center' });
-        doc.text('Player Name', startX + colWidths.no, tableTop + 2, { width: colWidths.name });
-        doc.text('Category', startX + colWidths.no + colWidths.name, tableTop + 2, { width: colWidths.category });
-        doc.text('Base Price', startX + colWidths.no + colWidths.name + colWidths.category, tableTop + 2, { width: colWidths.base, align: 'center' });
-        doc.text('Sold Price', startX + colWidths.no + colWidths.name + colWidths.category + colWidths.base, tableTop + 2, { width: colWidths.sold, align: 'center' });
+        doc.text('#', startX + 10, tableTop + 8, { width: colWidths.no - 10 });
+        doc.text('Player Name', startX + colWidths.no + 5, tableTop + 8, { width: colWidths.name });
+        doc.text('Category', startX + colWidths.no + colWidths.name + 5, tableTop + 8, { width: colWidths.category });
+        doc.text('Base Price', startX + colWidths.no + colWidths.name + colWidths.category, tableTop + 8, { width: colWidths.base, align: 'center' });
+        doc.text('Sold Price', startX + colWidths.no + colWidths.name + colWidths.category + colWidths.base, tableTop + 8, { width: colWidths.sold, align: 'center' });
 
-        doc.y = tableTop + 25;
+        doc.y = tableTop + 28;
 
-        // Table rows
+        // Table rows with improved styling
         team.players.forEach((player, pIndex) => {
           const rowY = doc.y;
+          const rowHeight = 26;
           
-          // Alternate row colors
-          if (pIndex % 2 === 0) {
-            doc.rect(startX, rowY, 495, 20).fillAndStroke('#f9fafb', '#e5e7eb');
+          // Check for pagination
+          if (rowY + rowHeight > doc.page.height - 80) {
+            doc.addPage({ margin: 40 });
+            doc.y = 60;
           }
+          
+          const currentRowY = doc.y;
+          
+          // Alternating row colors
+          const bgColor = pIndex % 2 === 0 ? '#f8fafc' : '#ffffff';
+          doc.rect(startX, currentRowY, tableWidth, rowHeight).fillAndStroke(bgColor, '#e2e8f0');
 
-          doc.fontSize(9).font('Helvetica').fillColor('#000000');
-          doc.text((pIndex + 1).toString(), startX + 5, rowY + 5, { width: colWidths.no, align: 'center' });
-          doc.text(player.name, startX + colWidths.no + 5, rowY + 5, { width: colWidths.name - 10 });
-          doc.text(player.category, startX + colWidths.no + colWidths.name, rowY + 5, { width: colWidths.category });
-          doc.text(`₹${player.basePrice}L`, startX + colWidths.no + colWidths.name + colWidths.category, rowY + 5, { width: colWidths.base, align: 'center' });
-          doc.text(`₹${player.soldPrice}L`, startX + colWidths.no + colWidths.name + colWidths.category + colWidths.base, rowY + 5, { width: colWidths.sold, align: 'center' });
+          // Parse prices properly
+          const basePrice = parsePrice(player.basePrice);
+          const soldPrice = parsePrice(player.soldPrice);
 
-          doc.y = rowY + 20;
+          // Row content
+          doc.fontSize(9).font('Helvetica').fillColor('#1f2937');
+          doc.text((pIndex + 1).toString(), startX + 10, currentRowY + 8, { width: colWidths.no - 10 });
+          doc.font('Helvetica-Bold').text(player.name, startX + colWidths.no + 5, currentRowY + 8, { width: colWidths.name - 5, ellipsis: true });
+          
+          // Category with colors
+          const categoryColors = {
+            'Batsman': '#dc2626',
+            'Bowler': '#16a34a', 
+            'All-Rounder': '#ea580c',
+            'Wicket-Keeper': '#2563eb'
+          };
+          doc.fillColor(categoryColors[player.category] || '#6b7280').font('Helvetica');
+          doc.text(player.category, startX + colWidths.no + colWidths.name + 5, currentRowY + 8, { width: colWidths.category });
+          
+          // Prices
+          doc.fillColor('#374151').font('Helvetica');
+          doc.text(`₹${basePrice}L`, startX + colWidths.no + colWidths.name + colWidths.category, currentRowY + 8, { width: colWidths.base, align: 'center' });
+          doc.fillColor('#059669').font('Helvetica-Bold');
+          doc.text(`₹${soldPrice}L`, startX + colWidths.no + colWidths.name + colWidths.category + colWidths.base, currentRowY + 8, { width: colWidths.sold, align: 'center' });
+
+          doc.y = currentRowY + rowHeight;
         });
+      } else {
+        doc.fontSize(11).fillColor('#9ca3af').font('Helvetica').text('No players in squad yet.', { align: 'center' });
+        doc.moveDown(1);
       }
 
-      // Footer
-      doc.fontSize(8).fillColor('#6b7280').text(
-        `Page ${index + 1} of ${teams.length} | Generated by Cricket Auction System`,
-        50,
-        doc.page.height - 50,
-        { align: 'center' }
+      // Footer with clean design
+      doc.fontSize(8).fillColor('#6b7280').font('Helvetica');
+      doc.text(
+        `Page ${index + 1} of ${teams.length}`,
+        40,
+        doc.page.height - 55,
+        { align: 'center', width: 515 }
       );
     });
 
     // Finalize PDF
     doc.end();
   } catch (error) {
+    console.error('PDF generation error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -258,8 +309,18 @@ router.get('/:id/download', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Team not found' });
     }
 
-    // Create PDF document
-    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    // Helper function to safely parse numbers and remove unwanted characters
+    const parsePrice = (value) => {
+      if (typeof value === 'number') return value;
+      if (typeof value === 'string') {
+        // Remove quotes, L, ₹ and any other non-numeric characters except decimal point
+        return parseFloat(value.replace(/['"₹L\s]/g, '')) || 0;
+      }
+      return 0;
+    };
+
+    // Create PDF document with better margins
+    const doc = new PDFDocument({ margin: 40, size: 'A4' });
     
     // Set response headers for PDF
     res.setHeader('Content-Type', 'application/pdf');
@@ -268,129 +329,140 @@ router.get('/:id/download', async (req, res) => {
     // Pipe PDF to response
     doc.pipe(res);
 
-    // Title
-    doc.fontSize(28).font('Helvetica-Bold').fillColor('#1e40af').text(team.teamName, { align: 'center' });
+    // Title Section with improved styling
+    doc.fontSize(32).font('Helvetica-Bold').fillColor('#1e3a8a').text(team.teamName, { align: 'center' });
     doc.moveDown(0.5);
-    doc.fontSize(16).font('Helvetica').fillColor('#4b5563').text(`Captain: ${team.captainName}`, { align: 'center' });
-    doc.moveDown(0.3);
-    doc.fontSize(10).fillColor('#6b7280').text(`Generated on: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, { align: 'center' });
+    doc.fontSize(14).font('Helvetica').fillColor('#374151').text(`Captain: ${team.captainName}`, { align: 'center' });
     doc.moveDown(2);
 
-    // Team Statistics Box
+    // Team Statistics Section
     const boxY = doc.y;
-    const boxHeight = 120;
+    const boxHeight = 100;
     
-    // Draw gradient-like box with border
-    doc.rect(50, boxY, 495, boxHeight).fillAndStroke('#eff6ff', '#3b82f6');
+    // Main statistics box with improved design
+    doc.roundedRect(40, boxY, 515, boxHeight, 5).fillAndStroke('#f0f9ff', '#3b82f6');
     
-    // Stats Title
-    doc.fontSize(14).font('Helvetica-Bold').fillColor('#1e40af').text('Team Statistics', 60, boxY + 15);
-    
-    // Stats Grid
-    const statsY = boxY + 45;
-    doc.fillColor('#000000');
-    
-    // Left Column
-    doc.fontSize(11).font('Helvetica-Bold').text('Initial Budget:', 70, statsY);
-    doc.font('Helvetica').text(`₹${Number.parseInt(process.env.INITIAL_BUDGET) || 110}L`, 200, statsY);
-    
-    doc.font('Helvetica-Bold').text('Total Spent:', 70, statsY + 20);
-    doc.font('Helvetica').text(`₹${(Number.parseInt(process.env.INITIAL_BUDGET) || 110) - team.remainingPoints}L`, 200, statsY + 20);
-    
-    doc.font('Helvetica-Bold').text('Remaining Budget:', 70, statsY + 40);
-    doc.font('Helvetica').text(`₹${team.remainingPoints}L`, 200, statsY + 40);
-    
-    // Right Column
-    doc.font('Helvetica-Bold').text('Players Bought:', 320, statsY);
-    doc.font('Helvetica').text(`${team.rosterSlotsFilled} / ${Number.parseInt(process.env.MAX_SQUAD_SIZE) || 11}`, 450, statsY);
-    
-    const avgPrice = team.rosterSlotsFilled > 0 
-      ? Math.round(((Number.parseInt(process.env.INITIAL_BUDGET) || 110) - team.remainingPoints) / team.rosterSlotsFilled)
-      : 0;
-    doc.font('Helvetica-Bold').text('Average Price:', 320, statsY + 20);
-    doc.font('Helvetica').text(`₹${avgPrice}L`, 450, statsY + 20);
-    
-    doc.font('Helvetica-Bold').text('Roster Slots Left:', 320, statsY + 40);
-    doc.font('Helvetica').text(((Number.parseInt(process.env.MAX_SQUAD_SIZE) || 11) - team.rosterSlotsFilled).toString(), 450, statsY + 40);
+    // Calculate values with proper number parsing
+    const initialBudget = Number.parseInt(process.env.INITIAL_BUDGET) || 1000;
+    const remainingBudget = parsePrice(team.remainingPoints);
+    const budgetSpent = initialBudget - remainingBudget;
+    const playersBought = team.rosterSlotsFilled || 0;
+    const avgPrice = playersBought > 0 ? Math.round(budgetSpent / playersBought) : 0;
 
-    doc.y = boxY + boxHeight + 30;
+    // Statistics Grid - Left Column
+    const statsStartY = boxY + 20;
+    doc.fillColor('#1e3a8a').fontSize(10).font('Helvetica-Bold');
+    
+    doc.text('Budget Spent:', 60, statsStartY, { width: 120 });
+    doc.fillColor('#000000').font('Helvetica').fontSize(13);
+    doc.text(`₹${budgetSpent}L`, 180, statsStartY - 1);
+    
+    doc.fillColor('#1e3a8a').fontSize(10).font('Helvetica-Bold');
+    doc.text('Remaining Budget:', 60, statsStartY + 30, { width: 120 });
+    doc.fillColor('#059669').font('Helvetica').fontSize(13);
+    doc.text(`₹${remainingBudget}L`, 180, statsStartY + 29);
 
-    // Squad Players Title
-    doc.fontSize(16).font('Helvetica-Bold').fillColor('#1e40af').text('Squad Players', { underline: true });
-    doc.moveDown(1);
+    // Statistics Grid - Right Column
+    doc.fillColor('#1e3a8a').fontSize(10).font('Helvetica-Bold');
+    doc.text('Players Bought:', 310, statsStartY, { width: 120 });
+    doc.fillColor('#000000').font('Helvetica').fontSize(13);
+    doc.text(`${playersBought}`, 430, statsStartY - 1);
+    
+    doc.fillColor('#1e3a8a').fontSize(10).font('Helvetica-Bold');
+    doc.text('Avg Player Price:', 310, statsStartY + 30, { width: 120 });
+    doc.fillColor('#7c3aed').font('Helvetica').fontSize(13);
+    doc.text(`₹${avgPrice}L`, 430, statsStartY + 29);
 
-    if (team.players.length > 0) {
-      // Table setup
+    doc.y = boxY + boxHeight + 25;
+
+    // Squad Players Section
+    doc.fontSize(18).font('Helvetica-Bold').fillColor('#1e3a8a').text('Squad Players', 40);
+    doc.moveDown(0.8);
+
+    if (team.players && team.players.length > 0) {
+      // Enhanced table design
       const tableTop = doc.y;
-      const colWidths = { no: 35, name: 170, category: 110, base: 90, sold: 90 };
-      const startX = 50;
+      const colWidths = { no: 35, name: 180, category: 100, base: 85, sold: 95 };
+      const startX = 40;
+      const tableWidth = Object.values(colWidths).reduce((a, b) => a + b, 0);
 
-      // Table Header Background
-      doc.rect(startX, tableTop - 5, 495, 28).fillAndStroke('#3b82f6', '#2563eb');
+      // Table Header with gradient effect
+      doc.roundedRect(startX, tableTop, tableWidth, 30, 3).fillAndStroke('#2563eb', '#1e40af');
       
-      // Table Headers
+      // Header Text
       doc.fontSize(11).font('Helvetica-Bold').fillColor('#ffffff');
-      doc.text('#', startX + 8, tableTop + 3, { width: colWidths.no - 8, align: 'left' });
-      doc.text('Player Name', startX + colWidths.no + 5, tableTop + 3, { width: colWidths.name });
-      doc.text('Category', startX + colWidths.no + colWidths.name + 5, tableTop + 3, { width: colWidths.category });
-      doc.text('Base Price', startX + colWidths.no + colWidths.name + colWidths.category + 5, tableTop + 3, { width: colWidths.base - 10, align: 'center' });
-      doc.text('Sold Price', startX + colWidths.no + colWidths.name + colWidths.category + colWidths.base + 5, tableTop + 3, { width: colWidths.sold - 10, align: 'center' });
+      doc.text('#', startX + 10, tableTop + 9, { width: colWidths.no - 10 });
+      doc.text('Player Name', startX + colWidths.no + 5, tableTop + 9, { width: colWidths.name });
+      doc.text('Category', startX + colWidths.no + colWidths.name + 5, tableTop + 9, { width: colWidths.category });
+      doc.text('Base Price', startX + colWidths.no + colWidths.name + colWidths.category, tableTop + 9, { width: colWidths.base, align: 'center' });
+      doc.text('Sold Price', startX + colWidths.no + colWidths.name + colWidths.category + colWidths.base, tableTop + 9, { width: colWidths.sold, align: 'center' });
 
-      doc.y = tableTop + 28;
+      doc.y = tableTop + 30;
 
-      // Table Rows
+      // Table Rows with improved styling
       team.players.forEach((player, index) => {
         const rowY = doc.y;
-        const rowHeight = 25;
+        const rowHeight = 28;
         
-        // Check if we need a new page
-        if (rowY + rowHeight > doc.page.height - 100) {
-          doc.addPage();
-          doc.y = 50;
+        // Pagination check
+        if (rowY + rowHeight > doc.page.height - 80) {
+          doc.addPage({ margin: 40 });
+          doc.y = 60;
         }
         
         const currentRowY = doc.y;
         
-        // Alternate row colors
-        const bgColor = index % 2 === 0 ? '#f9fafb' : '#ffffff';
-        doc.rect(startX, currentRowY, 495, rowHeight).fillAndStroke(bgColor, '#e5e7eb');
+        // Alternating row colors with subtle design
+        const bgColor = index % 2 === 0 ? '#f8fafc' : '#ffffff';
+        const borderColor = '#e2e8f0';
+        doc.rect(startX, currentRowY, tableWidth, rowHeight).fillAndStroke(bgColor, borderColor);
+
+        // Parse prices properly
+        const basePrice = parsePrice(player.basePrice);
+        const soldPrice = parsePrice(player.soldPrice);
 
         // Row content
-        doc.fontSize(10).font('Helvetica').fillColor('#000000');
-        doc.text((index + 1).toString(), startX + 8, currentRowY + 7, { width: colWidths.no - 8, align: 'left' });
-        doc.text(player.name, startX + colWidths.no + 5, currentRowY + 7, { width: colWidths.name - 5, ellipsis: true });
+        doc.fontSize(10).font('Helvetica').fillColor('#1f2937');
+        doc.text((index + 1).toString(), startX + 10, currentRowY + 9, { width: colWidths.no - 10 });
+        doc.font('Helvetica-Bold').text(player.name, startX + colWidths.no + 5, currentRowY + 9, { width: colWidths.name - 5, ellipsis: true });
         
-        // Category with color coding
+        // Category badge with colors
         const categoryColors = {
-          'Batsman': '#ef4444',
-          'Bowler': '#22c55e', 
-          'All-Rounder': '#f59e0b',
-          'Wicket-Keeper': '#3b82f6'
+          'Batsman': '#dc2626',
+          'Bowler': '#16a34a', 
+          'All-Rounder': '#ea580c',
+          'Wicket-Keeper': '#2563eb'
         };
-        doc.fillColor(categoryColors[player.category] || '#6b7280');
-        doc.font('Helvetica-Bold').text(player.category, startX + colWidths.no + colWidths.name + 5, currentRowY + 7, { width: colWidths.category });
+        doc.fillColor(categoryColors[player.category] || '#6b7280').font('Helvetica');
+        doc.text(player.category, startX + colWidths.no + colWidths.name + 5, currentRowY + 9, { width: colWidths.category });
         
-        doc.fillColor('#000000').font('Helvetica');
-        doc.text(`₹${player.basePrice}L`, startX + colWidths.no + colWidths.name + colWidths.category + 5, currentRowY + 7, { width: colWidths.base - 10, align: 'center' });
-        doc.font('Helvetica-Bold').text(`₹${player.soldPrice}L`, startX + colWidths.no + colWidths.name + colWidths.category + colWidths.base + 5, currentRowY + 7, { width: colWidths.sold - 10, align: 'center' });
+        // Prices
+        doc.fillColor('#374151').font('Helvetica');
+        doc.text(`₹${basePrice}L`, startX + colWidths.no + colWidths.name + colWidths.category, currentRowY + 9, { width: colWidths.base, align: 'center' });
+        doc.fillColor('#059669').font('Helvetica-Bold');
+        doc.text(`₹${soldPrice}L`, startX + colWidths.no + colWidths.name + colWidths.category + colWidths.base, currentRowY + 9, { width: colWidths.sold, align: 'center' });
 
         doc.y = currentRowY + rowHeight;
       });
     } else {
-      doc.fontSize(12).fillColor('#6b7280').text('No players in squad yet.', { align: 'center' });
+      doc.fontSize(12).fillColor('#9ca3af').font('Helvetica').text('No players in squad yet.', { align: 'center' });
+      doc.moveDown(2);
     }
 
-    // Footer
-    doc.fontSize(8).fillColor('#9ca3af').text(
-      `${team.teamName} Squad | Cricket Auction System | Generated: ${new Date().toLocaleString()}`,
-      50,
-      doc.page.height - 50,
-      { align: 'center', width: 495 }
+    // Footer with clean design
+    const footerY = doc.page.height - 60;
+    doc.fontSize(8).fillColor('#6b7280').font('Helvetica');
+    doc.text(
+      `Generated on ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
+      40,
+      footerY,
+      { align: 'center', width: 515 }
     );
 
     // Finalize PDF
     doc.end();
   } catch (error) {
+    console.error('PDF generation error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });

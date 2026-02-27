@@ -16,6 +16,30 @@ module.exports = (io) => {
   const adminSockets = new Set();
   const bigScreenSockets = new Set();
 
+  // Cleanup orphaned "IN_AUCTION" players on server start
+  (async () => {
+    try {
+      const auctionState = await AuctionState.findOne();
+      const currentPlayerId = auctionState?.currentPlayer?.toString();
+      
+      // Find all players marked as IN_AUCTION
+      const playersInAuction = await Player.find({ status: 'IN_AUCTION' });
+      
+      for (const player of playersInAuction) {
+        // If player is IN_AUCTION but not the current auction player, reset them
+        if (!currentPlayerId || player._id.toString() !== currentPlayerId) {
+          console.log(`Cleaning up orphaned IN_AUCTION player: ${player.name}`);
+          player.status = 'UNSOLD';
+          await player.save();
+        }
+      }
+      
+      console.log('Auction state cleanup completed');
+    } catch (error) {
+      console.error('Auction cleanup error:', error);
+    }
+  })();
+
   io.on('connection', (socket) => {
     console.log(`Client connected: ${socket.id}`);
 
@@ -122,6 +146,14 @@ module.exports = (io) => {
 
         if (!player || player.status !== 'IN_AUCTION') {
           return socket.emit('bid:error', { message: 'Player not in auction' });
+        }
+
+        // Check if team has reached max squad size
+        const MAX_SQUAD_SIZE = parseInt(process.env.MAX_SQUAD_SIZE) || 11;
+        if (team.rosterSlotsFilled >= MAX_SQUAD_SIZE) {
+          return socket.emit('bid:error', { 
+            message: `Squad full! Maximum ${MAX_SQUAD_SIZE} players allowed` 
+          });
         }
 
         // Validate bid amount
@@ -264,6 +296,66 @@ module.exports = (io) => {
       }
     });
 
+    socket.on('admin:resetAuction', async () => {
+      if (!adminSockets.has(socket.id)) return;
+
+      try {
+        const auctionState = await AuctionState.findOne().populate('currentPlayer');
+        
+        if (!auctionState || !auctionState.isActive) {
+          return socket.emit('error', { message: 'No active auction to reset' });
+        }
+
+        const player = auctionState.currentPlayer;
+
+        // Stop the timer
+        stopTimer();
+
+        // Reset player status to UNSOLD
+        if (player) {
+          player.status = 'UNSOLD';
+          await player.save();
+          console.log(`Auction reset: ${player.name} returned to UNSOLD status`);
+        }
+
+        // Clear auction state
+        auctionState.isActive = false;
+        auctionState.isPaused = false;
+        auctionState.currentPlayer = null;
+        auctionState.currentHighBid = { amount: 0, team: null };
+        await auctionState.save();
+
+        // Clear any bids for this player (optional - keeps bid history clean)
+        if (player) {
+          await Bid.deleteMany({ player: player._id });
+        }
+
+        // Broadcast reset event to all clients
+        io.emit('auction:reset', {
+          playerId: player?._id,
+          playerName: player?.name,
+          message: 'Auction has been reset'
+        });
+
+        // Broadcast updated auction state to all clients
+        const updatedAuctionState = await AuctionState.findOne();
+        io.emit('auction:state', {
+          isActive: updatedAuctionState.isActive,
+          isPaused: updatedAuctionState.isPaused,
+          currentPlayer: null,
+          currentHighBid: updatedAuctionState.currentHighBid
+        });
+
+        // Send updated auction state to admin
+        await sendAuctionState(socket);
+
+        console.log('Auction reset successfully');
+      } catch (error) {
+        console.error('Reset auction error:', error);
+        socket.emit('error', { message: 'Failed to reset auction' });
+      }
+    });
+
     socket.on('admin:undoSale', async ({ playerId }) => {
       if (!adminSockets.has(socket.id)) return;
 
@@ -296,6 +388,65 @@ module.exports = (io) => {
 
       } catch (error) {
         console.error('Undo error:', error);
+      }
+    });
+
+    // Remove player from IN_AUCTION status back to UNSOLD
+    socket.on('admin:removeFromAuction', async ({ playerId }) => {
+      if (!adminSockets.has(socket.id)) return;
+
+      try {
+        const player = await Player.findById(playerId);
+        if (!player || player.status !== 'IN_AUCTION') {
+          return socket.emit('error', { message: 'Player is not in auction' });
+        }
+
+        // Check if this player is currently in an active auction
+        const auctionState = await AuctionState.findOne();
+        const isCurrentAuctionPlayer = auctionState?.currentPlayer?.toString() === player._id.toString();
+
+        if (isCurrentAuctionPlayer && auctionState.isActive) {
+          // Stop the timer
+          stopTimer();
+
+          // Clear auction state
+          auctionState.isActive = false;
+          auctionState.isPaused = false;
+          auctionState.currentPlayer = null;
+          auctionState.currentHighBid = { amount: 0, team: null };
+          await auctionState.save();
+
+          // Broadcast auction state update
+          io.emit('auction:state', {
+            isActive: false,
+            isPaused: false,
+            currentPlayer: null,
+            currentHighBid: { amount: 0, team: null }
+          });
+        }
+
+        // Reset player status to UNSOLD
+        player.status = 'UNSOLD';
+        await player.save();
+
+        // Delete any bids for this player
+        await Bid.deleteMany({ player: player._id });
+
+        // Broadcast to all clients
+        io.emit('player:removedFromAuction', {
+          playerId: player._id,
+          playerName: player.name,
+          message: `${player.name} removed from auction`
+        });
+
+        console.log(`Player removed from auction: ${player.name} -> UNSOLD`);
+
+        // Send updated auction state to admin
+        await sendAuctionState(socket);
+
+      } catch (error) {
+        console.error('Remove from auction error:', error);
+        socket.emit('error', { message: 'Failed to remove player from auction' });
       }
     });
 
