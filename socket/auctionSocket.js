@@ -466,32 +466,12 @@ module.exports = (io) => {
           return socket.emit('error', { message: 'No players available for auction' });
         }
 
-        // Group players by base price
-        const playersByPrice = {};
-        availablePlayers.forEach(player => {
-          const price = player.basePrice;
-          if (!playersByPrice[price]) {
-            playersByPrice[price] = [];
-          }
-          playersByPrice[price].push(player);
-        });
-
-        // Sort prices in descending order (highest to lowest)
-        const sortedPrices = Object.keys(playersByPrice)
-          .map(Number)
-          .sort((a, b) => b - a);
-
-        // Shuffle players within each price group and flatten
-        const shuffledPlayers = [];
-        sortedPrices.forEach(price => {
-          const playersAtPrice = playersByPrice[price];
-          // Fisher-Yates shuffle algorithm
-          for (let i = playersAtPrice.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [playersAtPrice[i], playersAtPrice[j]] = [playersAtPrice[j], playersAtPrice[i]];
-          }
-          shuffledPlayers.push(...playersAtPrice);
-        });
+        // Shuffle all players randomly using Fisher-Yates shuffle algorithm
+        const shuffledPlayers = [...availablePlayers];
+        for (let i = shuffledPlayers.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffledPlayers[i], shuffledPlayers[j]] = [shuffledPlayers[j], shuffledPlayers[i]];
+        }
 
         // Initialize queue
         playerQueue = shuffledPlayers.map(p => p._id.toString());
@@ -572,7 +552,7 @@ module.exports = (io) => {
   // Timer functions
   function startTimer(io) {
     stopTimer(); // Clear any existing timer
-    timerValue = Number.parseInt(process.env.TIMER_DURATION) || 20;
+    timerValue = Number.parseInt(process.env.TIMER_DURATION) || 100;
 
     // Broadcast initial timer value
     io.emit('timer:update', { value: timerValue });
@@ -600,7 +580,7 @@ module.exports = (io) => {
 
   function resetTimer(io) {
     // Reset timer to 10 seconds on every new bid (standard auction behavior)
-    timerValue = 10;
+    timerValue = 30;
     io.emit('timer:reset', { value: timerValue });
   }
 
@@ -713,7 +693,14 @@ module.exports = (io) => {
       } 
       // If main queue is empty but there are unsold players, add them back
       else if (unsoldPlayers.length > 0) {
-        playerQueue = [...unsoldPlayers];
+        // Shuffle unsold players randomly using Fisher-Yates shuffle
+        const shuffledUnsold = [...unsoldPlayers];
+        for (let i = shuffledUnsold.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffledUnsold[i], shuffledUnsold[j]] = [shuffledUnsold[j], shuffledUnsold[i]];
+        }
+        
+        playerQueue = shuffledUnsold;
         unsoldPlayers = [];
         
         io.to('admin').emit('autoAuction:unsoldRound', {
