@@ -151,6 +151,48 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// Toggle player availability for auction
+router.patch('/:id/availability', async (req, res) => {
+  try {
+    const player = await Player.findById(req.params.id);
+    
+    if (!player) {
+      return res.status(404).json({ success: false, message: 'Player not found' });
+    }
+
+    // Don't allow changing availability for sold players
+    if (player.status === 'SOLD') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cannot change availability of sold players' 
+      });
+    }
+
+    // Don't allow changing availability for players currently in auction
+    if (player.status === 'IN_AUCTION') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cannot change availability of player currently in auction' 
+      });
+    }
+
+    // Toggle availability
+    const newAvailability = req.body.availability || 
+      (player.availability === 'AVAILABLE' ? 'UNAVAILABLE' : 'AVAILABLE');
+    
+    player.availability = newAvailability;
+    await player.save();
+
+    res.json({ 
+      success: true, 
+      message: `Player marked as ${newAvailability.toLowerCase()}`,
+      player 
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
 // Bulk upload via CSV
 const multer = require('multer');
 const csvStorage = multer.diskStorage({
