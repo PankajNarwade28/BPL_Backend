@@ -4,12 +4,12 @@ const AuctionState = require('../models/AuctionState');
 const Player = require('../models/Player');
 const Bid = require('../models/Bid');
 
-// Get current auction state
+// Get current auction state with timer calculation
 router.get('/state', async (req, res) => {
   try {
     const state = await AuctionState.findOne()
       .populate('currentPlayer')
-      .populate('currentHighBid.team', 'teamName')
+      .populate('currentHighBid.team', 'teamName logo remainingPoints')
       .populate({
         path: 'recentlySold.player',
         select: 'name photo category'
@@ -19,8 +19,46 @@ router.get('/state', async (req, res) => {
         select: 'teamName'
       });
 
-    res.json({ success: true, state });
+    // If no auction state exists or not active, check for any player in IN_AUCTION status
+    if (!state || !state.isActive) {
+      const playerInAuction = await Player.findOne({ status: 'IN_AUCTION' });
+      
+      if (playerInAuction) {
+        // Found a player in auction but no active state - reset the player
+        console.log('Found orphaned IN_AUCTION player:', playerInAuction.name);
+        playerInAuction.status = 'UNSOLD';
+        await playerInAuction.save();
+      }
+      
+      return res.json({ 
+        success: true, 
+        state: state || null,
+        timerValue: 0,
+        isActive: false
+      });
+    }
+
+    // Calculate timer value (you'll need to import this from socket handler or use a shared module)
+    // For now, return a default or calculate based on last bid time
+    const timerDuration = Number.parseInt(process.env.TIMER_DURATION) || 20;
+    let calculatedTimer = timerDuration;
+    
+    if (state.lastBidAt) {
+      const timeSinceLastBid = Math.floor((Date.now() - new Date(state.lastBidAt).getTime()) / 1000);
+      calculatedTimer = Math.max(0, timerDuration - timeSinceLastBid);
+    } else if (state.auctionStartedAt) {
+      const timeSinceStart = Math.floor((Date.now() - new Date(state.auctionStartedAt).getTime()) / 1000);
+      calculatedTimer = Math.max(0, timerDuration - timeSinceStart);
+    }
+
+    res.json({ 
+      success: true, 
+      state,
+      timerValue: calculatedTimer,
+      isActive: state.isActive
+    });
   } catch (error) {
+    console.error('Get auction state error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });

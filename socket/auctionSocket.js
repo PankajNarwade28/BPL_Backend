@@ -82,9 +82,24 @@ module.exports = (io) => {
         // Notify admin and big screen
         broadcastTeamStatus();
 
+        // Send current auction state to team
+        console.log('📤 Sending auction state to team after login:', teamData.teamName);
+        sendAuctionState(socket);
+
       } catch (error) {
         console.error('Login error:', error);
         socket.emit('auth:error', { message: 'Login failed' });
+      }
+    });
+
+    // Handle team request for current auction state
+    socket.on('team:getAuctionState', async () => {
+      try {
+        console.log('📡 Team requesting auction state...');
+        // Send current auction state to any team (authenticated or not)
+        await sendAuctionState(socket);
+      } catch (error) {
+        console.error('Get auction state error:', error);
       }
     });
 
@@ -255,6 +270,11 @@ module.exports = (io) => {
           return socket.emit('error', { message: 'Player not available' });
         }
 
+        // Check if player is marked as unavailable for auction
+        if (player.availability === 'UNAVAILABLE') {
+          return socket.emit('error', { message: 'Player is marked as unavailable for auction' });
+        }
+
         // Use shared function
         await startAuctionForPlayer(io, playerId);
 
@@ -268,12 +288,26 @@ module.exports = (io) => {
       if (!adminSockets.has(socket.id)) return;
 
       try {
-        const auctionState = await AuctionState.findOne();
-        if (auctionState) {
+        const auctionState = await AuctionState.findOne()
+          .populate('currentPlayer')
+          .populate('currentHighBid.team');
+        if (auctionState && auctionState.isActive) {
           auctionState.isPaused = true;
           await auctionState.save();
           stopTimer();
+          
+          // Broadcast pause event
           io.emit('auction:paused');
+          
+          // Broadcast full auction state to all clients with current timer value
+          io.emit('auction:state', {
+            state: {
+              ...auctionState.toObject(),
+              timeRemaining: timerValue
+            },
+            timerValue: timerValue
+          });
+          console.log('Auction paused and state broadcasted');
         }
       } catch (error) {
         console.error('Pause error:', error);
@@ -284,12 +318,26 @@ module.exports = (io) => {
       if (!adminSockets.has(socket.id)) return;
 
       try {
-        const auctionState = await AuctionState.findOne();
+        const auctionState = await AuctionState.findOne()
+          .populate('currentPlayer')
+          .populate('currentHighBid.team');
         if (auctionState && auctionState.isPaused) {
           auctionState.isPaused = false;
           await auctionState.save();
           startTimer(io);
+          
+          // Broadcast resume event
           io.emit('auction:resumed');
+          
+          // Broadcast full auction state to all clients with current timer value
+          io.emit('auction:state', {
+            state: {
+              ...auctionState.toObject(),
+              timeRemaining: timerValue
+            },
+            timerValue: timerValue
+          });
+          console.log('Auction resumed and state broadcasted');
         }
       } catch (error) {
         console.error('Resume error:', error);
@@ -457,9 +505,10 @@ module.exports = (io) => {
       }
 
       try {
-        // Get all available players (not sold)
+        // Get all available players (not sold and marked as available)
         const availablePlayers = await Player.find({ 
-          status: { $ne: 'SOLD' }
+          status: { $ne: 'SOLD' },
+          availability: 'AVAILABLE'
         });
 
         if (availablePlayers.length === 0) {
@@ -654,6 +703,26 @@ module.exports = (io) => {
         amount: soldPrice
       });
 
+      // Broadcast auction ended event with updated state
+      io.emit('auction:ended', {
+        player: player,
+        team: winningTeam ? {
+          id: winningTeam._id,
+          teamName: winningTeam.teamName
+        } : null,
+        amount: soldPrice,
+        status: winningTeam ? 'SOLD' : 'UNSOLD'
+      });
+
+      // Broadcast updated auction state to all clients
+      const updatedState = await AuctionState.findOne()
+        .populate('currentPlayer')
+        .populate('currentHighBid.team');
+      io.emit('auction:state', {
+        state: updatedState,
+        timerValue: 0
+      });
+
       // Update team status
       broadcastTeamStatus();
 
@@ -760,6 +829,15 @@ module.exports = (io) => {
         basePrice: player.basePrice,
         timerValue: timerValue
       });
+
+      // Also broadcast full auction state for immediate sync
+      const fullState = await AuctionState.findOne()
+        .populate('currentPlayer')
+        .populate('currentHighBid.team');
+      io.emit('auction:state', {
+        state: fullState,
+        timerValue: timerValue
+      });
     } catch (error) {
       console.error('Start auction for player error:', error);
     }
@@ -782,12 +860,27 @@ module.exports = (io) => {
         .populate('recentlySold.player')
         .populate('recentlySold.team');
 
-      socket.emit('auction:state', {
+      const stateData = {
         state: auctionState,
         timerValue: timerValue
+      };
+
+      console.log('🔄 Sending auction:state to socket:', {
+        socketId: socket.id,
+        hasState: !!auctionState,
+        isActive: auctionState?.isActive,
+        hasCurrentPlayer: !!auctionState?.currentPlayer,
+        playerName: auctionState?.currentPlayer?.name,
+        playerId: auctionState?.currentPlayer?._id,
+        timerValue: timerValue,
+        dataKeys: Object.keys(stateData)
       });
+
+      socket.emit('auction:state', stateData);
+      
+      console.log('✅ auction:state emitted successfully');
     } catch (error) {
-      console.error('Send state error:', error);
+      console.error('❌ Send state error:', error);
     }
   }
 };

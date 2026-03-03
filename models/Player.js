@@ -25,6 +25,11 @@ const playerSchema = new mongoose.Schema({
     enum: ['UNSOLD', 'SOLD', 'IN_AUCTION'],
     default: 'UNSOLD'
   },
+  availability: {
+    type: String,
+    enum: ['AVAILABLE', 'UNAVAILABLE'],
+    default: 'AVAILABLE'
+  },
   soldTo: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Team',
