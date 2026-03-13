@@ -64,7 +64,11 @@ router.post('/register', uploadPlayerPhoto.single('photo'), async (req, res) => 
 router.get('/', async (req, res) => {
   try {
     const { status } = req.query;
-    const filter = status ? { status } : {};
+    const filter = { availability: 'AVAILABLE' };
+
+    if (status) {
+      filter.status = status;
+    }
     
     const players = await Player.find(filter).populate('soldTo', 'teamName');
     res.json({ success: true, players });

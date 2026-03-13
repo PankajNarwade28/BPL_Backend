@@ -197,6 +197,7 @@ router.get('/dashboard', async (req, res) => {
     const players = await Player.find();
     
     const auctionState = await AuctionState.findOne()
+      .sort({ createdAt: 1, _id: 1 })
       .populate('currentPlayer')
       .populate('currentHighBid.team', 'teamName');
 
@@ -254,8 +255,9 @@ router.post('/clear-all-data', async (req, res) => {
     // Reinitialize auction state
     await AuctionState.create({
       currentPlayer: null,
-      currentBid: null,
       isActive: false,
+      isPaused: false,
+      currentHighBid: { amount: 5, team: null },
       timerValue: Number.parseInt(process.env.TIMER_DURATION) || 20
     });
 

@@ -8,6 +8,7 @@ const Bid = require('../models/Bid');
 router.get('/state', async (req, res) => {
   try {
     const state = await AuctionState.findOne()
+      .sort({ createdAt: 1, _id: 1 })
       .populate('currentPlayer')
       .populate('currentHighBid.team', 'teamName logo remainingPoints')
       .populate({
@@ -21,7 +22,7 @@ router.get('/state', async (req, res) => {
 
     // If no auction state exists or not active, check for any player in IN_AUCTION status
     if (!state || !state.isActive) {
-      const playerInAuction = await Player.findOne({ status: 'IN_AUCTION' });
+      const playerInAuction = await Player.findOne({ status: 'IN_AUCTION' }).sort({ createdAt: 1, _id: 1 });
       
       if (playerInAuction) {
         // Found a player in auction but no active state - reset the player

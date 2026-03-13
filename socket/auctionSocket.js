@@ -3,12 +3,27 @@ const Team = require('../models/Team');
 const Bid = require('../models/Bid');
 const AuctionState = require('../models/AuctionState');
 
+// Set definitions for auto auction (basePrice thresholds)
+const SET_CONFIG = {
+  A: { label: 'Set A', basePrice: 150 },
+  B: { label: 'Set B', basePrice: 100 },
+  C: { label: 'Set C', basePrice: 50 },
+  D: { label: 'Set D', basePrice: 20 },
+};
+const SET_ORDER = ['A', 'B', 'C', 'D'];
+
 let auctionTimer = null;
 let timerValue = Number.parseInt(process.env.TIMER_DURATION) || 20;
 let playerQueue = [];
 let isAutoAuction = false;
 let unsoldPlayers = [];
 let isTeamSummaryShowing = false;
+// Set-based auto auction state
+let currentSetName = null;
+let remainingSetOrder = [];
+let setQueues = {};
+let setIntroTimer = null;
+let inUnsoldRound = false;
 
 module.exports = (io) => {
   // Store connected clients
@@ -73,6 +88,7 @@ module.exports = (io) => {
             id: teamData._id,
             teamName: teamData.teamName,
             captainName: teamData.captainName,
+            logo: teamData.logo,
             remainingPoints: teamData.remainingPoints,
             rosterSlotsFilled: teamData.rosterSlotsFilled,
             players: teamData.players
@@ -498,7 +514,7 @@ module.exports = (io) => {
       }
     });
 
-    // Start auto auction with all available players
+    // Start auto auction with set-based ordering (Set A → B → C → D)
     socket.on('admin:startAutoAuction', async () => {
       if (!adminSockets.has(socket.id)) {
         return socket.emit('error', { message: 'Unauthorized' });
@@ -506,7 +522,7 @@ module.exports = (io) => {
 
       try {
         // Get all available players (not sold and marked as available)
-        const availablePlayers = await Player.find({ 
+        const availablePlayers = await Player.find({
           status: { $ne: 'SOLD' },
           availability: 'AVAILABLE'
         });
@@ -515,26 +531,55 @@ module.exports = (io) => {
           return socket.emit('error', { message: 'No players available for auction' });
         }
 
-        // Shuffle all players randomly using Fisher-Yates shuffle algorithm
-        const shuffledPlayers = [...availablePlayers];
-        for (let i = shuffledPlayers.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [shuffledPlayers[i], shuffledPlayers[j]] = [shuffledPlayers[j], shuffledPlayers[i]];
+        // Fisher-Yates shuffle helper
+        const shuffle = (arr) => {
+          const a = [...arr];
+          for (let i = a.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [a[i], a[j]] = [a[j], a[i]];
+          }
+          return a;
+        };
+
+        // Group players into sets by basePrice and shuffle each set
+        const rawSets = { A: [], B: [], C: [], D: [] };
+        for (const player of availablePlayers) {
+          if (player.basePrice >= 150) rawSets.A.push(player._id.toString());
+          else if (player.basePrice >= 100) rawSets.B.push(player._id.toString());
+          else if (player.basePrice >= 50)  rawSets.C.push(player._id.toString());
+          else                               rawSets.D.push(player._id.toString());
+        }
+        setQueues = {
+          A: shuffle(rawSets.A),
+          B: shuffle(rawSets.B),
+          C: shuffle(rawSets.C),
+          D: shuffle(rawSets.D),
+        };
+
+        // Only include sets that actually have players
+        remainingSetOrder = SET_ORDER.filter(s => setQueues[s].length > 0);
+        if (remainingSetOrder.length === 0) {
+          return socket.emit('error', { message: 'No players available for auction' });
         }
 
-        // Initialize queue
-        playerQueue = shuffledPlayers.map(p => p._id.toString());
+        playerQueue = [];
         unsoldPlayers = [];
         isAutoAuction = true;
+        currentSetName = null;
+        inUnsoldRound = false;
 
-        // Broadcast queue status
+        const setBreakdown = {};
+        SET_ORDER.forEach(s => { setBreakdown[s] = setQueues[s].length; });
+
         io.to('admin').emit('autoAuction:started', {
-          totalPlayers: playerQueue.length,
-          queueLength: playerQueue.length
+          totalPlayers: availablePlayers.length,
+          queueLength: availablePlayers.length,
+          setBreakdown,
+          setsWithPlayers: remainingSetOrder,
         });
 
-        // Start first player auction
-        await processNextPlayerInQueue(io);
+        // Start intro for first set
+        await startNextSetIntro(io);
 
       } catch (error) {
         console.error('Auto auction start error:', error);
@@ -548,7 +593,17 @@ module.exports = (io) => {
 
       isAutoAuction = false;
       stopTimer();
-      
+
+      // Clear any pending set intro timer
+      if (setIntroTimer) {
+        clearTimeout(setIntroTimer);
+        setIntroTimer = null;
+      }
+      currentSetName = null;
+      remainingSetOrder = [];
+      inUnsoldRound = false;
+
+      io.emit('set:introAborted');
       io.to('admin').emit('autoAuction:stopped', {
         remainingInQueue: playerQueue.length,
         unsoldCount: unsoldPlayers.length
@@ -563,7 +618,10 @@ module.exports = (io) => {
         isActive: isAutoAuction,
         queueLength: playerQueue.length,
         unsoldCount: unsoldPlayers.length,
-        totalRemaining: playerQueue.length + unsoldPlayers.length
+        totalRemaining: playerQueue.length + unsoldPlayers.length,
+        currentSet: currentSetName,
+        remainingSets: remainingSetOrder.length,
+        inUnsoldRound,
       });
     });
 
@@ -682,7 +740,8 @@ module.exports = (io) => {
           io.to('admin').emit('autoAuction:playerUnsold', {
             playerId: player._id,
             playerName: player.name,
-            unsoldCount: unsoldPlayers.length
+            unsoldCount: unsoldPlayers.length,
+            currentSet: currentSetName,
           });
         }
       }
@@ -698,7 +757,9 @@ module.exports = (io) => {
         player: player,
         team: winningTeam ? {
           id: winningTeam._id,
-          teamName: winningTeam.teamName
+          teamName: winningTeam.teamName,
+          logo: winningTeam.logo,
+          remainingPoints: winningTeam.remainingPoints
         } : null,
         amount: soldPrice
       });
@@ -708,7 +769,9 @@ module.exports = (io) => {
         player: player,
         team: winningTeam ? {
           id: winningTeam._id,
-          teamName: winningTeam.teamName
+          teamName: winningTeam.teamName,
+          logo: winningTeam.logo,
+          remainingPoints: winningTeam.remainingPoints
         } : null,
         amount: soldPrice,
         status: winningTeam ? 'SOLD' : 'UNSOLD'
@@ -740,56 +803,134 @@ module.exports = (io) => {
 
   async function processNextPlayerInQueue(io) {
     try {
-      // Check if there are players in the main queue
+      // Players still remaining in current set queue
       if (playerQueue.length > 0) {
         const playerId = playerQueue.shift();
-        
-        // Broadcast queue update
+
         io.to('admin').emit('autoAuction:queueUpdate', {
           queueLength: playerQueue.length,
           unsoldCount: unsoldPlayers.length,
-          totalRemaining: playerQueue.length + unsoldPlayers.length
+          totalRemaining: playerQueue.length + unsoldPlayers.length,
+          currentSet: currentSetName,
+          inUnsoldRound,
         });
 
-        // Start auction for this player
         const player = await Player.findById(playerId);
         if (player && player.status !== 'SOLD') {
           await startAuctionForPlayer(io, playerId);
         } else {
-          // Skip sold player and move to next
           await processNextPlayerInQueue(io);
         }
-      } 
-      // If main queue is empty but there are unsold players, add them back
-      else if (unsoldPlayers.length > 0) {
-        // Shuffle unsold players randomly using Fisher-Yates shuffle
+        return;
+      }
+
+      // Current set queue is empty — retry unsold players once (not if already in retry round)
+      if (!inUnsoldRound && unsoldPlayers.length > 0) {
+        inUnsoldRound = true;
         const shuffledUnsold = [...unsoldPlayers];
         for (let i = shuffledUnsold.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [shuffledUnsold[i], shuffledUnsold[j]] = [shuffledUnsold[j], shuffledUnsold[i]];
         }
-        
         playerQueue = shuffledUnsold;
         unsoldPlayers = [];
-        
-        io.to('admin').emit('autoAuction:unsoldRound', {
-          message: 'Starting auction for previously unsold players',
-          count: playerQueue.length
-        });
 
-        // Process first unsold player
+        const cfg = SET_CONFIG[currentSetName];
+        io.to('admin').emit('autoAuction:unsoldRound', {
+          message: `Re-auctioning unsold players from ${cfg ? cfg.label : 'current set'}`,
+          count: playerQueue.length,
+          currentSet: currentSetName,
+        });
         await processNextPlayerInQueue(io);
-      } 
-      // Queue is completely empty
-      else {
+        return;
+      }
+
+      // This set is fully done (including unsold retry)
+      const cfg = SET_CONFIG[currentSetName];
+      io.emit('set:complete', {
+        set: currentSetName,
+        label: cfg ? cfg.label : `Set ${currentSetName}`,
+      });
+      io.to('admin').emit('autoAuction:setComplete', {
+        set: currentSetName,
+        label: cfg ? cfg.label : `Set ${currentSetName}`,
+      });
+
+      inUnsoldRound = false;
+      unsoldPlayers = [];
+      playerQueue = [];
+
+      if (remainingSetOrder.length > 0) {
+        // 5-second pause, then start next set intro
+        setTimeout(async () => {
+          await startNextSetIntro(io);
+        }, 5000);
+      } else {
         isAutoAuction = false;
         io.to('admin').emit('autoAuction:completed', {
-          message: 'All players have been auctioned'
+          message: 'All sets have been auctioned'
         });
         io.emit('auction:allCompleted');
       }
     } catch (error) {
       console.error('Queue processing error:', error);
+    }
+  }
+
+  // Broadcast a 30-second set introduction then begin the set
+  async function startNextSetIntro(io) {
+    try {
+      currentSetName = remainingSetOrder.shift();
+      const cfg = SET_CONFIG[currentSetName];
+      playerQueue = [...(setQueues[currentSetName] || [])];
+      unsoldPlayers = [];
+      inUnsoldRound = false;
+
+      // Fetch full player documents for the intro screen
+      const playersData = await Player.find({
+        _id: { $in: setQueues[currentSetName] || [] },
+        status: { $ne: 'SOLD' },
+      });
+
+      const INTRO_DURATION = 30000;
+
+      io.emit('set:intro', {
+        set: currentSetName,
+        label: cfg.label,
+        basePrice: cfg.basePrice,
+        players: playersData,
+        totalPlayers: playersData.length,
+        duration: INTRO_DURATION,
+      });
+
+      io.to('admin').emit('autoAuction:setIntroStarted', {
+        set: currentSetName,
+        label: cfg.label,
+        basePrice: cfg.basePrice,
+        totalPlayers: playersData.length,
+        remainingSets: remainingSetOrder.length,
+      });
+
+      console.log(`Set ${currentSetName} intro started (${INTRO_DURATION / 1000}s)`);
+
+      setIntroTimer = setTimeout(async () => {
+        setIntroTimer = null;
+        io.emit('set:started', {
+          set: currentSetName,
+          label: cfg.label,
+          basePrice: cfg.basePrice,
+          remaining: playerQueue.length,
+        });
+        io.to('admin').emit('autoAuction:setStarted', {
+          set: currentSetName,
+          label: cfg.label,
+          basePrice: cfg.basePrice,
+          remaining: playerQueue.length,
+        });
+        await processNextPlayerInQueue(io);
+      }, INTRO_DURATION);
+    } catch (error) {
+      console.error('startNextSetIntro error:', error);
     }
   }
 
