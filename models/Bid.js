@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-
+//fixed issues
 const bidSchema = new mongoose.Schema({
   player: {
     type: mongoose.Schema.Types.ObjectId,
