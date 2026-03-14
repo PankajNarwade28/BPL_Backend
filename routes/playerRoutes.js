@@ -6,6 +6,23 @@ const path = require('path');
 const Player = require('../models/Player');
 const { uploadPlayerPhoto, uploadToCloudinary } = require('../config/cloudinary');
 
+const populateSoldTo = 'soldTo';
+const populateSoldToFields = 'teamName';
+
+const buildPlayerFilter = ({ status, availability }) => {
+  const filter = {};
+
+  if (status) {
+    filter.status = status;
+  }
+
+  if (availability) {
+    filter.availability = availability;
+  }
+
+  return filter;
+};
+
 // Player self-registration with photo upload
 router.post('/register', uploadPlayerPhoto.single('photo'), async (req, res) => {
   try {
@@ -60,17 +77,44 @@ router.post('/register', uploadPlayerPhoto.single('photo'), async (req, res) => 
   }
 });
 
-// Get all players
+// Get all registered players for admin/player management screens
+router.get('/all', async (req, res) => {
+  try {
+    const filter = buildPlayerFilter(req.query);
+    const players = await Player.find(filter).populate(populateSoldTo, populateSoldToFields);
+    res.json({ success: true, players });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get players currently eligible for auction
+router.get('/auction-available', async (req, res) => {
+  try {
+    const filter = buildPlayerFilter(req.query);
+    filter.availability = 'AVAILABLE';
+
+    if (!filter.status) {
+      filter.status = 'UNSOLD';
+    }
+
+    const players = await Player.find(filter).populate(populateSoldTo, populateSoldToFields);
+    res.json({ success: true, players });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Get players using legacy route semantics for auction-facing clients
 router.get('/', async (req, res) => {
   try {
-    const { status } = req.query;
-    const filter = { availability: 'AVAILABLE' };
+    const filter = buildPlayerFilter(req.query);
 
-    if (status) {
-      filter.status = status;
+    if (!filter.availability) {
+      filter.availability = 'AVAILABLE';
     }
-    
-    const players = await Player.find(filter).populate('soldTo', 'teamName');
+
+    const players = await Player.find(filter).populate(populateSoldTo, populateSoldToFields);
     res.json({ success: true, players });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

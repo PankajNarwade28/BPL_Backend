@@ -24,6 +24,7 @@ let remainingSetOrder = [];
 let setQueues = {};
 let setIntroTimer = null;
 let inUnsoldRound = false;
+let isRandomMode = false;
 
 module.exports = (io) => {
   // Store connected clients
@@ -514,10 +515,15 @@ module.exports = (io) => {
       }
     });
 
-    // Start auto auction with set-based ordering (Set A → B → C → D)
-    socket.on('admin:startAutoAuction', async () => {
+    // Start auto auction — mode: 'set' (Set A→B→C→D with intros) or 'random' (all players shuffled)
+    socket.on('admin:startAutoAuction', async ({ mode } = {}) => {
       if (!adminSockets.has(socket.id)) {
         return socket.emit('error', { message: 'Unauthorized' });
+      }
+
+      // Block starting new auction if team summary is showing
+      if (isTeamSummaryShowing) {
+        return socket.emit('error', { message: 'Team summary is showing. Please wait.' });
       }
 
       try {
@@ -541,45 +547,62 @@ module.exports = (io) => {
           return a;
         };
 
-        // Group players into sets by basePrice and shuffle each set
-        const rawSets = { A: [], B: [], C: [], D: [] };
-        for (const player of availablePlayers) {
-          if (player.basePrice >= 150) rawSets.A.push(player._id.toString());
-          else if (player.basePrice >= 100) rawSets.B.push(player._id.toString());
-          else if (player.basePrice >= 50)  rawSets.C.push(player._id.toString());
-          else                               rawSets.D.push(player._id.toString());
-        }
-        setQueues = {
-          A: shuffle(rawSets.A),
-          B: shuffle(rawSets.B),
-          C: shuffle(rawSets.C),
-          D: shuffle(rawSets.D),
-        };
-
-        // Only include sets that actually have players
-        remainingSetOrder = SET_ORDER.filter(s => setQueues[s].length > 0);
-        if (remainingSetOrder.length === 0) {
-          return socket.emit('error', { message: 'No players available for auction' });
-        }
-
         playerQueue = [];
         unsoldPlayers = [];
         isAutoAuction = true;
         currentSetName = null;
         inUnsoldRound = false;
+        isRandomMode = mode === 'random';
 
-        const setBreakdown = {};
-        SET_ORDER.forEach(s => { setBreakdown[s] = setQueues[s].length; });
+        if (isRandomMode) {
+          // Random mode: shuffle ALL available players regardless of set/price
+          playerQueue = shuffle(availablePlayers.map(p => p._id.toString()));
+          remainingSetOrder = [];
+          setQueues = {};
 
-        io.to('admin').emit('autoAuction:started', {
-          totalPlayers: availablePlayers.length,
-          queueLength: availablePlayers.length,
-          setBreakdown,
-          setsWithPlayers: remainingSetOrder,
-        });
+          io.to('admin').emit('autoAuction:started', {
+            totalPlayers: availablePlayers.length,
+            queueLength: availablePlayers.length,
+            mode: 'random',
+          });
 
-        // Start intro for first set
-        await startNextSetIntro(io);
+          // Start immediately — no set intro needed
+          await processNextPlayerInQueue(io);
+        } else {
+          // Set-wise mode: group by base price and show set intros
+          const rawSets = { A: [], B: [], C: [], D: [] };
+          for (const player of availablePlayers) {
+            if (player.basePrice >= 150) rawSets.A.push(player._id.toString());
+            else if (player.basePrice >= 100) rawSets.B.push(player._id.toString());
+            else if (player.basePrice >= 50)  rawSets.C.push(player._id.toString());
+            else                               rawSets.D.push(player._id.toString());
+          }
+          setQueues = {
+            A: shuffle(rawSets.A),
+            B: shuffle(rawSets.B),
+            C: shuffle(rawSets.C),
+            D: shuffle(rawSets.D),
+          };
+
+          remainingSetOrder = SET_ORDER.filter(s => setQueues[s].length > 0);
+          if (remainingSetOrder.length === 0) {
+            return socket.emit('error', { message: 'No players available for auction' });
+          }
+
+          const setBreakdown = {};
+          SET_ORDER.forEach(s => { setBreakdown[s] = setQueues[s].length; });
+
+          io.to('admin').emit('autoAuction:started', {
+            totalPlayers: availablePlayers.length,
+            queueLength: availablePlayers.length,
+            setBreakdown,
+            setsWithPlayers: remainingSetOrder,
+            mode: 'set',
+          });
+
+          // Start intro for first set
+          await startNextSetIntro(io);
+        }
 
       } catch (error) {
         console.error('Auto auction start error:', error);
@@ -592,6 +615,7 @@ module.exports = (io) => {
       if (!adminSockets.has(socket.id)) return;
 
       isAutoAuction = false;
+      isRandomMode = false;
       stopTimer();
 
       // Clear any pending set intro timer
@@ -622,6 +646,7 @@ module.exports = (io) => {
         currentSet: currentSetName,
         remainingSets: remainingSetOrder.length,
         inUnsoldRound,
+        mode: isRandomMode ? 'random' : 'set',
       });
     });
 
