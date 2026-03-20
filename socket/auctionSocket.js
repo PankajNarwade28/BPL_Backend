@@ -5,12 +5,13 @@ const AuctionState = require('../models/AuctionState');
 
 // Set definitions for auto auction (basePrice thresholds)
 const SET_CONFIG = {
+  APP: { label: 'Set A++', basePrice: 200 },
   A: { label: 'Set A', basePrice: 150 },
   B: { label: 'Set B', basePrice: 100 },
   C: { label: 'Set C', basePrice: 50 },
   D: { label: 'Set D', basePrice: 20 },
 };
-const SET_ORDER = ['A', 'B', 'C', 'D'];
+const SET_ORDER = ['APP', 'A', 'B', 'C', 'D'];
 
 let auctionTimer = null;
 let timerValue = Number.parseInt(process.env.TIMER_DURATION) || 20;
@@ -515,7 +516,7 @@ module.exports = (io) => {
       }
     });
 
-    // Start auto auction — mode: 'set' (Set A→B→C→D with intros) or 'random' (all players shuffled)
+    // Start auto auction — mode: 'set' (Set A++→A→B→C→D with intros) or 'random' (all players shuffled)
     socket.on('admin:startAutoAuction', async ({ mode } = {}) => {
       if (!adminSockets.has(socket.id)) {
         return socket.emit('error', { message: 'Unauthorized' });
@@ -570,14 +571,16 @@ module.exports = (io) => {
           await processNextPlayerInQueue(io);
         } else {
           // Set-wise mode: group by base price and show set intros
-          const rawSets = { A: [], B: [], C: [], D: [] };
+          const rawSets = { APP: [], A: [], B: [], C: [], D: [] };
           for (const player of availablePlayers) {
-            if (player.basePrice >= 150) rawSets.A.push(player._id.toString());
+            if (player.basePrice >= 200) rawSets.APP.push(player._id.toString());
+            else if (player.basePrice >= 150) rawSets.A.push(player._id.toString());
             else if (player.basePrice >= 100) rawSets.B.push(player._id.toString());
             else if (player.basePrice >= 50)  rawSets.C.push(player._id.toString());
             else                               rawSets.D.push(player._id.toString());
           }
           setQueues = {
+            APP: shuffle(rawSets.APP),
             A: shuffle(rawSets.A),
             B: shuffle(rawSets.B),
             C: shuffle(rawSets.C),
