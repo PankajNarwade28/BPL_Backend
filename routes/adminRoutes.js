@@ -16,17 +16,38 @@ router.post('/create-captain', uploadTeamLogo.single('logo'), async (req, res) =
     // Trim and extract fields from FormData
     const teamName = req.body.teamName?.trim();
     const captainName = req.body.captainName?.trim();
+    const captainPlayerId = req.body.captainPlayerId?.trim();
     const teamId = req.body.teamId?.trim();
     const pin = req.body.pin?.trim();
     
-    console.log('Parsed fields:', { teamName, captainName, teamId, pin });
+    console.log('Parsed fields:', { teamName, captainName, captainPlayerId, teamId, pin });
     
     // Validate required fields
-    if (!teamName || !captainName || !teamId || !pin) {
+    if (!teamName || !captainPlayerId || !teamId || !pin) {
       console.log('Validation failed - missing fields');
       return res.status(400).json({ 
         success: false, 
-        message: 'All fields are required: teamName, captainName, teamId, pin' 
+        message: 'All fields are required: teamName, captainPlayerId, teamId, pin' 
+      });
+    }
+
+    const captainPlayer = await Player.findById(captainPlayerId);
+    if (!captainPlayer) {
+      return res.status(404).json({
+        success: false,
+        message: 'Selected captain player not found'
+      });
+    }
+
+    const isPlayerAvailableForCaptain =
+      captainPlayer.status === 'UNSOLD' &&
+      captainPlayer.availability === 'AVAILABLE' &&
+      !captainPlayer.soldTo;
+
+    if (!isPlayerAvailableForCaptain) {
+      return res.status(400).json({
+        success: false,
+        message: 'Selected captain player is not available'
       });
     }
 
@@ -58,28 +79,38 @@ router.post('/create-captain', uploadTeamLogo.single('logo'), async (req, res) =
     // Create new team
     const newTeam = new Team({
       teamName,
-      captainName,
+      captainName: captainName || captainPlayer.name,
       teamId,
       pin, // Will be hashed by pre-save middleware
       logo: logoUrl,
       remainingPoints: Number.parseInt(process.env.INITIAL_BUDGET) || 110,
-      rosterSlotsFilled: 0,
-      players: []
+      rosterSlotsFilled: 1,
+      players: [captainPlayer._id]
     });
 
     await newTeam.save();
+
+    captainPlayer.status = 'SOLD';
+    captainPlayer.soldTo = newTeam._id;
+    captainPlayer.soldPrice = 0;
+    captainPlayer.soldAt = new Date();
+    await captainPlayer.save();
 
     console.log('Team created successfully:', newTeam.teamId);
 
     res.json({ 
       success: true, 
-      message: 'Captain created successfully',
+      message: 'Team and captain created successfully',
       team: {
         _id: newTeam._id,
         teamName: newTeam.teamName,
         captainName: newTeam.captainName,
         teamId: newTeam.teamId,
         pin: pin // Return unhashed PIN (only time it's shown)
+      },
+      captainPlayer: {
+        _id: captainPlayer._id,
+        name: captainPlayer.name
       }
     });
   } catch (error) {
