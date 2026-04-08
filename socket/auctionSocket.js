@@ -27,6 +27,10 @@ let setIntroTimer = null;
 let inUnsoldRound = false;
 let isRandomMode = false;
 
+const emitAdminError = (socket, message) => {
+  socket.emit('admin:error', { message });
+};
+
 module.exports = (io) => {
   // Store connected clients
   const connectedTeams = new Map();
@@ -274,23 +278,23 @@ module.exports = (io) => {
     // Admin controls
     socket.on('admin:startAuction', async ({ playerId }) => {
       if (!adminSockets.has(socket.id)) {
-        return socket.emit('error', { message: 'Unauthorized' });
+        return emitAdminError(socket, 'Unauthorized');
       }
 
       // Block starting new auction if team summary is showing
       if (isTeamSummaryShowing) {
-        return socket.emit('error', { message: 'Please wait for team summary to complete' });
+        return emitAdminError(socket, 'Please wait for team summary to complete');
       }
 
       try {
         const player = await Player.findById(playerId);
         if (!player || player.status === 'SOLD') {
-          return socket.emit('error', { message: 'Player not available' });
+          return emitAdminError(socket, 'Player not available');
         }
 
         // Check if player is marked as unavailable for auction
         if (player.availability === 'UNAVAILABLE') {
-          return socket.emit('error', { message: 'Player is marked as unavailable for auction' });
+          return emitAdminError(socket, 'Player is marked as unavailable for auction');
         }
 
         // Use shared function
@@ -298,7 +302,7 @@ module.exports = (io) => {
 
       } catch (error) {
         console.error('Start auction error:', error);
-        socket.emit('error', { message: 'Failed to start auction' });
+        emitAdminError(socket, 'Failed to start auction');
       }
     });
 
@@ -369,7 +373,7 @@ module.exports = (io) => {
         const auctionState = await AuctionState.findOne().populate('currentPlayer');
         
         if (!auctionState || !auctionState.isActive) {
-          return socket.emit('error', { message: 'No active auction to reset' });
+          return emitAdminError(socket, 'No active auction to reset');
         }
 
         const player = auctionState.currentPlayer;
@@ -418,7 +422,7 @@ module.exports = (io) => {
         console.log('Auction reset successfully');
       } catch (error) {
         console.error('Reset auction error:', error);
-        socket.emit('error', { message: 'Failed to reset auction' });
+        emitAdminError(socket, 'Failed to reset auction');
       }
     });
 
@@ -428,7 +432,7 @@ module.exports = (io) => {
       try {
         const player = await Player.findById(playerId);
         if (!player || player.status !== 'SOLD') {
-          return socket.emit('error', { message: 'Cannot undo this sale' });
+          return emitAdminError(socket, 'Cannot undo this sale');
         }
 
         const team = await Team.findById(player.soldTo);
@@ -464,7 +468,7 @@ module.exports = (io) => {
       try {
         const player = await Player.findById(playerId);
         if (!player || player.status !== 'IN_AUCTION') {
-          return socket.emit('error', { message: 'Player is not in auction' });
+          return emitAdminError(socket, 'Player is not in auction');
         }
 
         // Check if this player is currently in an active auction
@@ -512,30 +516,30 @@ module.exports = (io) => {
 
       } catch (error) {
         console.error('Remove from auction error:', error);
-        socket.emit('error', { message: 'Failed to remove player from auction' });
+        emitAdminError(socket, 'Failed to remove player from auction');
       }
     });
 
     // Start auto auction — mode: 'set' (Set A++→A→B→C→D with intros) or 'random' (all players shuffled)
     socket.on('admin:startAutoAuction', async ({ mode } = {}) => {
       if (!adminSockets.has(socket.id)) {
-        return socket.emit('error', { message: 'Unauthorized' });
+        return emitAdminError(socket, 'Unauthorized');
       }
 
       // Block starting new auction if team summary is showing
       if (isTeamSummaryShowing) {
-        return socket.emit('error', { message: 'Team summary is showing. Please wait.' });
+        return emitAdminError(socket, 'Team summary is showing. Please wait.');
       }
 
       try {
         // Get all available players (not sold and marked as available)
         const availablePlayers = await Player.find({
           status: { $ne: 'SOLD' },
-          availability: 'AVAILABLE'
+          availability: { $in: ['AVAILABLE', null] }
         });
 
         if (availablePlayers.length === 0) {
-          return socket.emit('error', { message: 'No players available for auction' });
+          return emitAdminError(socket, 'No players available for auction');
         }
 
         // Fisher-Yates shuffle helper
@@ -589,7 +593,7 @@ module.exports = (io) => {
 
           remainingSetOrder = SET_ORDER.filter(s => setQueues[s].length > 0);
           if (remainingSetOrder.length === 0) {
-            return socket.emit('error', { message: 'No players available for auction' });
+            return emitAdminError(socket, 'No players available for auction');
           }
 
           const setBreakdown = {};
@@ -609,7 +613,7 @@ module.exports = (io) => {
 
       } catch (error) {
         console.error('Auto auction start error:', error);
-        socket.emit('error', { message: 'Failed to start auto auction' });
+        emitAdminError(socket, 'Failed to start auto auction');
       }
     });
 
@@ -680,6 +684,12 @@ module.exports = (io) => {
       // Handle big screen disconnect
       if (bigScreenSockets.has(socket.id)) {
         bigScreenSockets.delete(socket.id);
+
+        // Safety: if all big screens disconnect while summary flag is on, unblock auctions.
+        if (bigScreenSockets.size === 0 && isTeamSummaryShowing) {
+          isTeamSummaryShowing = false;
+          io.to('admin').emit('teamSummary:showing', { isShowing: false });
+        }
       }
     });
   });
