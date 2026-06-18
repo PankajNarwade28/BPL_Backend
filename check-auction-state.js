@@ -8,7 +8,7 @@ const Team = require('./models/Team');
 async function checkAuctionState() {
   try {
     await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/cricket-auction');
-    console.log('Connected to database');
+    console.log('Connected to Database');
 
     // Check auction state
     const auctionState = await AuctionState.findOne()
